@@ -1,0 +1,299 @@
+<meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>MineAI Mobile</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;touch-action:none}
+canvas{display:block}
+
+/* CRUZ */
+#crosshair{
+ position:fixed;left:50%;top:50%;
+ width:24px;height:24px;
+ transform:translate(-50%,-50%);
+ pointer-events:none;
+ z-index:10;
+}
+#crosshair::before,#crosshair::after{
+ content:"";position:absolute;background:white;
+}
+#crosshair::before{left:11px;top:0;width:2px;height:24px}
+#crosshair::after{top:11px;left:0;width:24px;height:2px}
+
+/* BOTONES */
+.btn{
+ position:fixed;right:20px;width:60px;height:60px;
+ border-radius:14px;font-size:20px;z-index:10
+}
+#break{bottom:100px;background:#c0392b;color:#fff}
+#place{bottom:170px;background:#27ae60;color:#fff}
+
+/* HOTBAR */
+#hotbar{
+ position:fixed;bottom:20px;left:50%;
+ transform:translateX(-50%);
+ display:flex;gap:8px;z-index:10;
+}
+.slot{
+ width:48px;height:48px;border:2px solid #444;border-radius:6px;
+}
+.slot.active{border:3px solid white}
+</style>
+</head>
+
+<body>
+<div id="crosshair"></div>
+<button id="break" class="btn">⛏</button>
+<button id="place" class="btn">⬜</button>
+<div id="hotbar"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+// ================= ESCENA =================
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener("resize",()=>{
+ camera.aspect = window.innerWidth/window.innerHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ================= LUZ =================
+scene.add(new THREE.AmbientLight(0xffffff,0.6));
+const sun = new THREE.DirectionalLight(0xffffff,0.6);
+sun.position.set(50,100,50);
+scene.add(sun);
+
+// ================= TEXTURAS =================
+const loader = new THREE.TextureLoader();
+loader.crossOrigin = "";
+
+const textures = {};
+let loadedCount = 0;
+
+function loadTex(name,url){
+ loader.load(url,t=>{
+   t.magFilter = THREE.NearestFilter;
+   t.minFilter = THREE.NearestFilter;
+   textures[name]=t;
+   loadedCount++;
+ });
+}
+
+// Texturas
+loadTex("grassTop","https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/grass_top.png");
+loadTex("grassSide","https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/grass_side.png");
+loadTex("dirt","https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/dirt.png");
+loadTex("stone","https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/stone.png");
+
+// ================= BLOQUES =================
+const blocks = [];
+const geo = new THREE.BoxGeometry(1,1,1);
+
+function grassMaterial(){
+ return [
+   new THREE.MeshLambertMaterial({map:textures.grassSide}),
+   new THREE.MeshLambertMaterial({map:textures.grassSide}),
+   new THREE.MeshLambertMaterial({map:textures.grassTop}),
+   new THREE.MeshLambertMaterial({map:textures.dirt}),
+   new THREE.MeshLambertMaterial({map:textures.grassSide}),
+   new THREE.MeshLambertMaterial({map:textures.grassSide})
+ ];
+}
+
+// Crear mundo plano
+function createBlocks(){
+ for(let x=0;x<20;x++){
+   for(let z=0;z<20;z++){
+     const b = new THREE.Mesh(geo,grassMaterial());
+     b.position.set(x,0,z);
+     scene.add(b);
+     blocks.push(b);
+   }
+ }
+}
+
+// ================= JUGADOR =================
+const player = {
+ pos:new THREE.Vector3(10,2,10),
+ yaw:0,pitch:0
+};
+camera.position.copy(player.pos);
+
+// ================= RAYCAST / HITBOX =================
+const raycaster = new THREE.Raycaster();
+const center = new THREE.Vector2(0,0);
+let currentHit = null;
+
+const hitbox = new THREE.LineSegments(
+ new THREE.EdgesGeometry(new THREE.BoxGeometry(1.02,1.02,1.02)),
+ new THREE.LineBasicMaterial({color:0xffffff})
+);
+hitbox.visible=false;
+scene.add(hitbox);
+
+// ================= INVENTARIO INFINITO =================
+let selectedSlot = 0;
+const blockTypes = ["grass","dirt","stone"];
+const hotbar = document.getElementById("hotbar");
+
+blockTypes.forEach((b,i)=>{
+ const s = document.createElement("div");
+ s.className="slot"+(i===0?" active":"");
+ s.textContent=b[0].toUpperCase();
+ s.addEventListener("touchstart",()=>{
+   selectedSlot = i;
+   document.querySelectorAll(".slot").forEach(x=>x.classList.remove("active"));
+   s.classList.add("active");
+ });
+ hotbar.appendChild(s);
+});
+
+// ================= BOTONES =================
+const breakBtn = document.getElementById("break");
+const placeBtn = document.getElementById("place");
+
+breakBtn.addEventListener("touchstart",()=>{
+ if(!currentHit) return;
+ scene.remove(currentHit.object);
+ blocks.splice(blocks.indexOf(currentHit.object),1);
+});
+
+placeBtn.addEventListener("touchstart",()=>{
+ if(!currentHit) return;
+ const pos = currentHit.object.position.clone().add(currentHit.face.normal);
+ let mat;
+ if(blockTypes[selectedSlot]=="grass") mat = grassMaterial();
+ else if(blockTypes[selectedSlot]=="dirt") mat = new THREE.MeshLambertMaterial({map:textures.dirt});
+ else mat = new THREE.MeshLambertMaterial({map:textures.stone});
+ const b = new THREE.Mesh(geo, Array.isArray(mat)?mat:[mat,mat,mat,mat,mat,mat]);
+ b.position.copy(pos);
+ scene.add(b);
+ blocks.push(b);
+});
+
+// ================= MIRAR 1 DEDO =================
+let looking=false,last={x:0,y:0};
+renderer.domElement.addEventListener("touchstart",e=>{
+ looking=true; last.x=e.touches[0].clientX; last.y=e.touches[0].clientY;
+},{passive:true});
+renderer.domElement.addEventListener("touchmove",e=>{
+ if(!looking) return;
+ player.yaw -= (e.touches[0].clientX-last.x)*0.005;
+ player.pitch -= (e.touches[0].clientY-last.y)*0.005;
+ player.pitch=Math.max(-1.5,Math.min(1.5,player.pitch));
+ last.x=e.touches[0].clientX; last.y=e.touches[0].clientY;
+},{passive:true});
+renderer.domElement.addEventListener("touchend",()=>looking=false);
+
+// ================= LOOP =================
+function loop(){
+ camera.rotation.set(player.pitch,player.yaw,0);
+ raycaster.setFromCamera(center,camera);
+ const hits = raycaster.intersectObjects(blocks);
+ if(hits.length){
+   currentHit = hits[0];
+   hitbox.visible=true;
+   hitbox.position.copy(currentHit.object.position);
+ }else{
+   currentHit = null;
+   hitbox.visible=false;
+ }
+ renderer.render(scene,camera);
+ requestAnimationFrame(loop);
+}
+
+// ================= ESPERAR TEXTURAS =================
+function waitTextures(){
+ if(loadedCount<4){requestAnimationFrame(waitTextures);}
+ else{createBlocks(); loop();}
+}
+waitTextures();
+</script>
+</body>
+</html><script>// ================= FÍSICA & JUGADOR CORREGIDA =================
+const player = {
+    pos: new THREE.Vector3(2, 5, 2),
+    vel: new THREE.Vector3(0, 0, 0),
+    yaw: 0,
+    pitch: 0,
+    height: 1.6, // Altura de los ojos
+    speed: 0.1,
+    onGround: false
+};
+
+// Función auxiliar para saber si existe un bloque en coordenadas EXACTAS (enteras)
+function getBlock(x, y, z) {
+    return worldData[`${x},${y},${z}`];
+}
+
+function updatePhysics() {
+    // 1. Aplicar Gravedad
+    player.vel.y -= 0.018; 
+
+    // 2. Movimiento Horizontal (X/Z)
+    // Calculamos hacia donde nos movemos
+    let dx = 0; 
+    let dz = 0;
+    const sin = Math.sin(player.yaw);
+    const cos = Math.cos(player.yaw);
+
+    if(controls.fwd){ dx -= sin * player.speed; dz -= cos * player.speed; }
+    if(controls.back){ dx += sin * player.speed; dz += cos * player.speed; }
+    if(controls.left){ dx -= cos * player.speed; dz += sin * player.speed; }
+    if(controls.right){ dx += cos * player.speed; dz -= sin * player.speed; }
+
+    // Aplicar movimiento X/Z
+    player.pos.x += dx;
+    player.pos.z += dz;
+
+    // 3. Colisión Vertical (Suelo y Caída)
+    // Calculamos dónde estarán los pies en el siguiente cuadro
+    const nextY = player.pos.y + player.vel.y;
+    const feetPos = nextY - player.height; // Posición absoluta de los pies
+    
+    // Coordenada del bloque que está justo DEBAJO de los pies
+    // Math.round nos da el centro del bloque.
+    const blockX = Math.round(player.pos.x);
+    const blockZ = Math.round(player.pos.z);
+    
+    // Verificamos el bloque en el nivel de los pies (redondeado hacia abajo/cercano)
+    // Importante: Si los pies están en 0.5, el bloque está en 0.
+    const blockBelowY = Math.round(feetPos - 0.5); 
+
+    // ¿Hay un bloque sólido ahí?
+    if (player.vel.y < 0 && getBlock(blockX, blockBelowY, blockZ)) {
+        // ¡COLISIÓN! (Suelo detectado)
+        player.vel.y = 0;
+        player.onGround = true;
+        
+        // "Snap": Pegar al jugador exactamente encima del bloque
+        // El bloque está en blockBelowY. Su techo está en blockBelowY + 0.5.
+        // Los ojos del jugador deben estar en (Techo) + (Altura Jugador)
+        player.pos.y = (blockBelowY + 0.5) + player.height;
+    } else {
+        // CAYENDO (Aire)
+        player.pos.y = nextY;
+        player.onGround = false;
+    }
+
+    // 4. Límite de caída al vacío (Respawn)
+    if(player.pos.y < -10) { 
+        player.pos.set(2, 10, 2); 
+        player.vel.y = 0; 
+    }
+
+    // Actualizar cámara
+    camera.position.copy(player.pos);
+    camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
+}
+</script>
