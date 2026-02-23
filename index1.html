@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<title>MineAI - Creative Inventory Individual Textures (+ Cobblestone)</title>
+<style>
+  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#87ceeb;touch-action:none}
+  canvas{display:block}
+
+  /* Crosshair */
+  #crosshair { position: fixed; left:50%; top:50%; width:20px; height:20px; transform:translate(-50%,-50%); pointer-events:none; z-index:100; mix-blend-mode: difference; }
+  #crosshair::before,#crosshair::after{ content:""; position:absolute; background:#fff; }
+  #crosshair::before{ left:9px; top:0; width:2px; height:20px; }
+  #crosshair::after{ top:9px; left:0; width:20px; height:2px; }
+
+  /* D-PAD */
+  #dpad { position: fixed; bottom: 40px; left: 18px; z-index: 20; display:flex; flex-direction:column; gap:12px; }
+  .dpad-row{ display:flex; gap:16px; align-items:center; justify-content:center; }
+  .m-btn{ width:60px;height:60px;background:rgba(0,0,0,0.28); border:2px solid #fff; border-radius:12px; color:#fff; font-size:24px; display:flex; align-items:center; justify-content:center; user-select:none; -webkit-tap-highlight-color:transparent;}
+  .m-btn:active{ background:rgba(255,255,255,0.25); }
+
+  /* Action buttons */
+  .btn{ position:fixed; right:18px; width:68px; height:68px; border-radius:14px; font-size:26px; z-index:20; border:2px solid rgba(255,255,255,0.5); color:#fff; display:flex; align-items:center; justify-content:center; }
+  #break{ bottom:110px; background:#c0392b; }
+  #place{ bottom:190px; background:#27ae60; }
+  #jump{ bottom:270px; background:#2980b9; }
+  #invBtn{ bottom:20px; left:18px; right:auto; width:120px; height:46px; background:#333; border-radius:10px; border:2px solid #fff; }
+
+  /* Hotbar */
+  #hotbar{
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%); display:flex; gap:8px; z-index:15;
+    background: rgba(0,0,0,0.45); padding:6px; border-radius:8px;
+  }
+  .slot{
+    width:48px;height:48px;border:2px solid #444;border-radius:6px; background-color: rgba(0,0,0,0.25);
+    box-sizing:border-box; display:flex; align-items:center; justify-content:center; overflow:hidden;
+    background-repeat:no-repeat; background-size: cover;
+  }
+  .slot.active{ border:3px solid #fff; }
+
+  /* Inventory modal (creative 1.0) */
+  #inventoryModal{
+    position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); width:80vw; max-width:900px; height:70vh; z-index:40;
+    background: rgba(10,10,10,0.95); border:3px solid #666; border-radius:10px; display:none; flex-direction:column; padding:12px; box-sizing:border-box;
+  }
+  #inventoryHeader{ display:flex; justify-content:space-between; align-items:center; color:#fff; margin-bottom:8px; }
+  #inventoryGrid{ flex:1; overflow:auto; background:#111; padding:8px; border-radius:6px; display:grid; grid-template-columns: repeat(auto-fill, 48px); gap:8px; align-content:start; }
+  .inv-tile{ width:48px; height:48px; border:2px solid #333; border-radius:6px; box-sizing:border-box; background-repeat:no-repeat; background-size: cover; }
+  #closeInv{ background:#900; color:#fff; padding:6px 10px; border-radius:6px; border:none; cursor:pointer; }
+
+  /* small responsiveness */
+  @media (max-width:600px){
+    #inventoryModal{ width:94vw; height:78vh; }
+    .m-btn{ width:54px; height:54px; font-size:20px; }
+  }
+</style>
+</head>
+<body>
+  <div id="crosshair"></div>
+
+  <div id="dpad">
+    <div class="dpad-row"><button id="btn-fwd" class="m-btn">▲</button></div>
+    <div class="dpad-row">
+      <button id="btn-left" class="m-btn">◀</button>
+      <button id="btn-right" class="m-btn">▶</button>
+    </div>
+    <div class="dpad-row"><button id="btn-back" class="m-btn">▼</button></div>
+  </div>
+
+  <button id="break" class="btn">⛏</button>
+  <button id="place" class="btn">⬜</button>
+  <button id="jump" class="btn">⬆</button>
+  <button id="invBtn">Inventario</button>
+
+  <div id="hotbar"><!-- empieza vacío --></div>
+
+  <!-- Inventory modal -->
+  <div id="inventoryModal" aria-hidden="true">
+    <div id="inventoryHeader">
+      <div style="color:#fff;font-weight:600">Inventario (Creativo 1.0)</div>
+      <div>
+        <button id="closeInv">Cerrar</button>
+      </div>
+    </div>
+    <div id="inventoryGrid"></div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+// Texturas individuales URLs
+const textureURLs = {
+  grassTop: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/grass_top.png",
+  grassSide: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/grass_side.png",
+  dirt: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/dirt.png",
+  stone: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/stone.png",
+  wood: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/wood.png",
+  diamond: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/diamond_block.png",
+  cobblestone: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/refs/heads/main/cobblestone.png"
+};
+
+// THREE setup
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio || 1);
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener('resize', ()=> {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// Lights
+scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+sun.position.set(50,100,50);
+scene.add(sun);
+
+// Load textures
+const loader = new THREE.TextureLoader();
+const textures = {};
+let loadedCount = 0;
+const totalTextures = Object.keys(textureURLs).length;
+
+function onTextureLoaded(){
+  loadedCount++;
+  if(loadedCount === totalTextures){
+    initWorld();
+  }
+}
+
+for(const key in textureURLs){
+  loader.load(textureURLs[key], tex => {
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    textures[key] = tex;
+    onTextureLoaded();
+  });
+}
+
+// Create materials for blocks with 6 faces
+function createGrassMaterial(){
+  return [
+    new THREE.MeshLambertMaterial({map: textures.grassSide}), // right
+    new THREE.MeshLambertMaterial({map: textures.grassSide}), // left
+    new THREE.MeshLambertMaterial({map: textures.grassTop}),  // top
+    new THREE.MeshLambertMaterial({map: textures.dirt}),      // bottom
+    new THREE.MeshLambertMaterial({map: textures.grassSide}), // front
+    new THREE.MeshLambertMaterial({map: textures.grassSide})  // back
+  ];
+}
+function createDirtMaterial(){
+  const mat = new THREE.MeshLambertMaterial({map: textures.dirt});
+  return [mat, mat, mat, mat, mat, mat];
+}
+function createStoneMaterial(){
+  const mat = new THREE.MeshLambertMaterial({map: textures.stone});
+  return [mat, mat, mat, mat, mat, mat];
+}
+function createCobbleMaterial(){
+  const mat = new THREE.MeshLambertMaterial({map: textures.cobblestone});
+  return [mat, mat, mat, mat, mat, mat];
+}
+function createWoodMaterial(){
+  const mat = new THREE.MeshLambertMaterial({map: textures.wood});
+  return [mat, mat, mat, mat, mat, mat];
+}
+function createDiamondMaterial(){
+  const mat = new THREE.MeshLambertMaterial({map: textures.diamond});
+  return [mat, mat, mat, mat, mat, mat];
+}
+
+// Block types
+const blockTypes = [
+  {name: "grass", createMaterial: createGrassMaterial},
+  {name: "dirt", createMaterial: createDirtMaterial},
+  {name: "stone", createMaterial: createStoneMaterial},
+  {name: "cobblestone", createMaterial: createCobbleMaterial},
+  {name: "wood", createMaterial: createWoodMaterial},
+  {name: "diamond", createMaterial: createDiamondMaterial}
+];
+
+// World
+const placedBlocks = [];
+const brokenBlocks = [];
+
+const player = {
+  pos: new THREE.Vector3(10, 3, 10),
+  yaw: 0, pitch: 0,
+  speed: 0.12,
+  velocityY: 0, jumpForce: 0.18, gravity: 0.008, onGround: false
+};
+
+const moveControls = { fwd:false, back:false, left:false, right:false };
+function bindDPad(id, key){
+  const btn = document.getElementById(id);
+  btn.addEventListener('touchstart', e=>{ e.preventDefault(); moveControls[key]=true; });
+  btn.addEventListener('touchend', e=>{ e.preventDefault(); moveControls[key]=false; });
+}
+bindDPad('btn-fwd','fwd');
+bindDPad('btn-back','back');
+bindDPad('btn-left','left');
+bindDPad('btn-right','right');
+
+document.getElementById('jump').addEventListener('touchstart', e=>{
+  e.preventDefault();
+  if(player.onGround){
+    player.velocityY = player.jumpForce;
+    player.onGround = false;
+  }
+});
+
+// Raycaster
+const raycaster = new THREE.Raycaster();
+const center2 = new THREE.Vector2(0,0);
+let currentHit = null;
+
+// Hitbox visual
+const hitbox = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.02,1.02,1.02)), new THREE.LineBasicMaterial({color:0xffffff}));
+hitbox.visible = false;
+scene.add(hitbox);
+
+// Inventory / hotbar state
+let selectedBlockIndex = null; // index in blockTypes
+const hotbarEl = document.getElementById('hotbar');
+
+// INVENTORY UI elements
+const invBtn = document.getElementById('invBtn');
+const invModal = document.getElementById('inventoryModal');
+const invGrid = document.getElementById('inventoryGrid');
+const closeInv = document.getElementById('closeInv');
+
+invBtn.addEventListener('click', ()=> openInventory());
+closeInv.addEventListener('click', ()=> closeInventory());
+function openInventory(){
+  populateInventoryGrid();
+  invModal.style.display = 'flex';
+  invModal.setAttribute('aria-hidden','false');
+}
+function closeInventory(){
+  invModal.style.display = 'none';
+  invModal.setAttribute('aria-hidden','true');
+}
+
+// Hotbar update
+function updateHotbar(){
+  hotbarEl.innerHTML = '';
+  if(selectedBlockIndex === null){
+    for(let i=0;i<5;i++){
+      const s = document.createElement('div');
+      s.className = 'slot';
+      hotbarEl.appendChild(s);
+    }
+    return;
+  }
+  const block = blockTypes[selectedBlockIndex];
+  const mats = block.createMaterial();
+  // Usamos la textura top para preview (o la primera disponible)
+  const tex = mats[2].map.image.src;
+  const s = document.createElement('div');
+  s.className = 'slot active';
+  s.style.backgroundImage = `url(${tex})`;
+  s.style.backgroundSize = 'cover';
+  hotbarEl.appendChild(s);
+  for(let i=0;i<4;i++){
+    const e = document.createElement('div');
+    e.className = 'slot';
+    hotbarEl.appendChild(e);
+  }
+}
+
+// Populate inventory grid
+function populateInventoryGrid(){
+  invGrid.innerHTML = '';
+  for(let i=0;i<blockTypes.length;i++){
+    const block = blockTypes[i];
+    const mats = block.createMaterial();
+    const tex = mats[2].map.image.src; // top texture
+    const tile = document.createElement('div');
+    tile.className = 'inv-tile';
+    tile.style.backgroundImage = `url(${tex})`;
+    tile.style.backgroundSize = 'cover';
+    tile.addEventListener('click', ()=>{
+      selectedBlockIndex = i;
+      updateHotbar();
+      closeInventory();
+    });
+    invGrid.appendChild(tile);
+  }
+}
+
+// Place / break logic
+const geo = new THREE.BoxGeometry(1,1,1);
+
+document.getElementById('break').addEventListener('touchstart', e=>{
+  e.preventDefault();
+  if(!currentHit) return;
+  const obj = currentHit.object;
+  const idx = placedBlocks.indexOf(obj);
+  if(idx !== -1){
+    placedBlocks.splice(idx,1);
+    brokenBlocks.push(obj);
+  }
+  scene.remove(obj);
+  currentHit = null;
+  hitbox.visible = false;
+});
+
+document.getElementById('place').addEventListener('touchstart', e=>{
+  e.preventDefault();
+  if(selectedBlockIndex === null) return;
+  let placePos = null;
+  if(currentHit){
+    placePos = currentHit.object.position.clone().add(currentHit.face.normal);
+  } else {
+    const dir = new THREE.Vector3(0,0,-1).applyEuler(new THREE.Euler(player.pitch, player.yaw, 0, 'YXZ'));
+    placePos = player.pos.clone().add(dir.multiplyScalar(2)).floor();
+  }
+  const block = blockTypes[selectedBlockIndex];
+  const mats = block.createMaterial();
+  const b = new THREE.Mesh(geo, mats);
+  b.position.set(Math.round(placePos.x), Math.round(placePos.y), Math.round(placePos.z));
+  scene.add(b);
+  placedBlocks.push(b);
+});
+
+// World init
+function initWorld(){
+  // Suelo 20x20 con grass
+  for(let x=0;x<20;x++){
+    for(let z=0;z<20;z++){
+      const mats = createGrassMaterial();
+      const b = new THREE.Mesh(geo, mats);
+      b.position.set(x,0,z);
+      scene.add(b);
+      placedBlocks.push(b);
+    }
+  }
+  // Piedras dispersas
+  for(let i=0;i<8;i++){
+    const mats = createStoneMaterial();
+    const b = new THREE.Mesh(geo, mats);
+    b.position.set(3+(i%4),1,3+Math.floor(i/4));
+    scene.add(b);
+    placedBlocks.push(b);
+  }
+  selectedBlockIndex = null;
+  updateHotbar();
+  loop();
+}
+
+// Movement look controls
+let looking = false, lastTouch = {x:0,y:0};
+renderer.domElement.addEventListener('touchstart', e=>{
+  if(e.touches && e.touches[0].clientX > innerWidth/2){
+    looking = true; lastTouch.x = e.touches[0].clientX; lastTouch.y = e.touches[0].clientY;
+  }
+},{passive:false});
+renderer.domElement.addEventListener('touchmove', e=>{
+  if(!looking) return;
+  const t = e.touches[0];
+  player.yaw -= (t.clientX - lastTouch.x) * 0.005;
+  player.pitch -= (t.clientY - lastTouch.y) * 0.005;
+  player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch));
+  lastTouch.x = t.clientX; lastTouch.y = t.clientY;
+},{passive:false});
+renderer.domElement.addEventListener('touchend', e=>{
+  looking = false;
+});
+
+// Collision check
+function checkCollision(newPos) {
+  const playerRadius = 0.3;
+  const playerHeight = 1.6;
+  for(const b of placedBlocks){
+    const bp = b.position;
+    if (newPos.x + playerRadius > bp.x - 0.5 && newPos.x - playerRadius < bp.x + 0.5 &&
+        newPos.z + playerRadius > bp.z - 0.5 && newPos.z - playerRadius < bp.z + 0.5 &&
+        newPos.y > bp.y - 0.5 && newPos.y - playerHeight < bp.y + 0.5) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Main loop
+function loop(){
+  let dx = 0, dz = 0;
+  const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw);
+  if(moveControls.fwd){ dx -= sin * player.speed; dz -= cos * player.speed; }
+  if(moveControls.back){ dx += sin * player.speed; dz += cos * player.speed; }
+  if(moveControls.left){ dx -= cos * player.speed; dz += sin * player.speed; }
+  if(moveControls.right){ dx += cos * player.speed; dz -= sin * player.speed; }
+
+  const nX = player.pos.clone();
+  nX.x += dx;
+  if(!checkCollision(nX)) player.pos.x = nX.x;
+
+  const nZ = player.pos.clone();
+  nZ.z += dz;
+  if(!checkCollision(nZ)) player.pos.z = nZ.z;
+
+  player.velocityY -= player.gravity;
+  const nY = player.pos.clone();
+  nY.y += player.velocityY;
+  if(checkCollision(nY)){
+    if(player.velocityY < 0) player.onGround = true;
+    player.velocityY = 0;
+  } else {
+    player.pos.y = nY.y;
+    player.onGround = false;
+  }
+  if(player.pos.y < -20) player.pos.set(10,3,10);
+
+  camera.position.copy(player.pos);
+  camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
+
+  raycaster.setFromCamera(center2, camera);
+  const hits = raycaster.intersectObjects(placedBlocks);
+  if(hits.length && hits[0].distance < 6){
+    currentHit = hits[0];
+    hitbox.visible = true;
+    hitbox.position.copy(currentHit.object.position);
+  } else {
+    currentHit = null;
+    hitbox.visible = false;
+  }
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+THREE.Vector3.prototype.floor = function(){ this.x = Math.round(this.x); this.y = Math.round(this.y); this.z = Math.round(this.z); return this; };
+
+camera.position.set(player.pos.x, player.pos.y, player.pos.z);
+camera.lookAt(new THREE.Vector3(player.pos.x, player.pos.y, player.pos.z-1));
+</script>
+</body>
+</html>
