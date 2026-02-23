@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<title>MineAI - Indev Optimized</title>
+<style>
+  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#87ceeb;touch-action:none}
+  canvas{display:block}
+  #crosshair { position: fixed; left:50%; top:50%; width:20px; height:20px; transform:translate(-50%,-50%); pointer-events:none; z-index:100; mix-blend-mode: difference; }
+  #crosshair::before,#crosshair::after{ content:""; position:absolute; background:#fff; }
+  #crosshair::before{ left:9px; top:0; width:2px; height:20px; }
+  #crosshair::after{ top:9px; left:0; width:20px; height:2px; }
+  #dpad { position: fixed; bottom: 40px; left: 18px; z-index: 20; display:flex; flex-direction:column; gap:12px; }
+  .dpad-row{ display:flex; gap:16px; align-items:center; justify-content:center; }
+  .m-btn{ width:60px;height:60px;background:rgba(0,0,0,0.28); border:2px solid #fff; border-radius:12px; color:#fff; font-size:24px; display:flex; align-items:center; justify-content:center; user-select:none; -webkit-tap-highlight-color:transparent;}
+  .m-btn:active{ background:rgba(255,255,255,0.25); }
+  .btn{ position:fixed; right:18px; width:68px; height:68px; border-radius:14px; font-size:26px; z-index:20; border:2px solid rgba(255,255,255,0.5); color:#fff; display:flex; align-items:center; justify-content:center; }
+  #break{ bottom:110px; background:#c0392b; }
+  #place{ bottom:190px; background:#27ae60; }
+  #jump{ bottom:270px; background:#2980b9; }
+  #invBtn{ position:fixed; bottom:20px; left:18px; width:120px; height:46px; background:#333; border-radius:10px; border:2px solid #fff; color: white; z-index: 20; }
+  #hotbar{ position:fixed; bottom:20px; left:50%; transform:translateX(-50%); display:flex; gap:8px; z-index:15; background: rgba(0,0,0,0.45); padding:6px; border-radius:8px; }
+  .slot{ width:48px;height:48px;border:2px solid #444;border-radius:6px; background-color: rgba(0,0,0,0.25); box-sizing:border-box; display:flex; align-items:center; justify-content:center; overflow:hidden; background-repeat:no-repeat; background-size: cover; }
+  .slot.active{ border:3px solid #fff; }
+  #inventoryModal{ position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); width:80vw; max-width:900px; height:70vh; z-index:40; background: rgba(10,10,10,0.95); border:3px solid #666; border-radius:10px; display:none; flex-direction:column; padding:12px; box-sizing:border-box; }
+  #inventoryHeader{ display:flex; justify-content:space-between; align-items:center; color:#fff; margin-bottom:8px; }
+  #inventoryGrid{ flex:1; overflow:auto; background:#111; padding:8px; border-radius:6px; display:grid; grid-template-columns: repeat(auto-fill, 48px); gap:8px; align-content:start; }
+  .inv-tile{ width:48px; height:48px; border:2px solid #333; border-radius:6px; box-sizing:border-box; background-repeat:no-repeat; background-size: cover; }
+  #closeInv{ background:#900; color:#fff; padding:6px 10px; border-radius:6px; border:none; cursor:pointer; }
+</style>
+</head>
+<body>
+  <div id="crosshair"></div>
+  <div id="dpad">
+    <div class="dpad-row"><button id="btn-fwd" class="m-btn">▲</button></div>
+    <div class="dpad-row"><button id="btn-left" class="m-btn">◀</button><button id="btn-right" class="m-btn">▶</button></div>
+    <div class="dpad-row"><button id="btn-back" class="m-btn">▼</button></div>
+  </div>
+  <button id="break" class="btn">⛏</button>
+  <button id="place" class="btn">⬜</button>
+  <button id="jump" class="btn">⬆</button>
+  <button id="invBtn">Inventario</button>
+  <div id="hotbar"></div>
+  <div id="inventoryModal">
+    <div id="inventoryHeader"><div style="color:#fff;font-weight:600">Inventario Optimizado</div><button id="closeInv">Cerrar</button></div>
+    <div id="inventoryGrid"></div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
+
+<script>
+const textureURLs = {
+  grassTop: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/grass_top.png",
+  grassSide: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/grass_side.png",
+  dirt: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/dirt.png",
+  stone: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/stone.png",
+  wood: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/wood.png",
+  diamond: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/main/diamond_block.png",
+  cobblestone: "https://raw.githubusercontent.com/facumerag-ctrl/Mineai/refs/heads/main/cobblestone.png"
+};
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({antialias:false});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(1);
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+sun.position.set(50,100,50);
+scene.add(sun);
+
+const loader = new THREE.TextureLoader();
+const textures = {};
+let loadedCount = 0;
+const totalTextures = Object.keys(textureURLs).length;
+
+for(const key in textureURLs){
+  loader.load(textureURLs[key], tex => {
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    textures[key] = tex;
+    if(++loadedCount === totalTextures) initWorld();
+  });
+}
+
+const blockTypes = [
+  {name: "grass", mats: null, texKey: "grassTop"}, 
+  {name: "dirt", mats: null, texKey: "dirt"}, 
+  {name: "stone", mats: null, texKey: "stone"},
+  {name: "cobblestone", mats: null, texKey: "cobblestone"}, 
+  {name: "wood", mats: null, texKey: "wood"}, 
+  {name: "diamond", mats: null, texKey: "diamond"}
+];
+
+function setupMaterials(){
+  blockTypes[0].mats = [
+    new THREE.MeshLambertMaterial({map: textures.grassSide}), new THREE.MeshLambertMaterial({map: textures.grassSide}),
+    new THREE.MeshLambertMaterial({map: textures.grassTop}), new THREE.MeshLambertMaterial({map: textures.dirt}),
+    new THREE.MeshLambertMaterial({map: textures.grassSide}), new THREE.MeshLambertMaterial({map: textures.grassSide})
+  ];
+  const dirtMat = new THREE.MeshLambertMaterial({map: textures.dirt});
+  blockTypes[1].mats = [dirtMat, dirtMat, dirtMat, dirtMat, dirtMat, dirtMat];
+  const stoneMat = new THREE.MeshLambertMaterial({map: textures.stone});
+  blockTypes[2].mats = [stoneMat, stoneMat, stoneMat, stoneMat, stoneMat, stoneMat];
+  const cobbleMat = new THREE.MeshLambertMaterial({map: textures.cobblestone});
+  blockTypes[3].mats = [cobbleMat, cobbleMat, cobbleMat, cobbleMat, cobbleMat, cobbleMat];
+  const woodMat = new THREE.MeshLambertMaterial({map: textures.wood});
+  blockTypes[4].mats = [woodMat, woodMat, woodMat, woodMat, woodMat, woodMat];
+  const diamondMat = new THREE.MeshLambertMaterial({map: textures.diamond});
+  blockTypes[5].mats = [diamondMat, diamondMat, diamondMat, diamondMat, diamondMat, diamondMat];
+}
+
+const worldSize = 64; 
+const worldHeight = 16; // Altura base del mundo
+const worldData = new Map(); 
+const meshMap = new Map(); 
+
+const player = {
+  pos: new THREE.Vector3(16, 20, 16),
+  yaw: 0, pitch: 0, speed: 0.12,
+  velocityY: 0, jumpForce: 0.18, gravity: 0.008, onGround: false
+};
+
+const moveControls = { fwd:false, back:false, left:false, right:false };
+function bindDPad(id, key){
+  const btn = document.getElementById(id);
+  btn.addEventListener('touchstart', e=>{ e.preventDefault(); moveControls[key]=true; });
+  btn.addEventListener('touchend', e=>{ e.preventDefault(); moveControls[key]=false; });
+}
+bindDPad('btn-fwd','fwd'); bindDPad('btn-back','back'); bindDPad('btn-left','left'); bindDPad('btn-right','right');
+
+document.getElementById('jump').addEventListener('touchstart', e=>{
+  e.preventDefault(); if(player.onGround){ player.velocityY = player.jumpForce; player.onGround = false; }
+});
+
+const raycaster = new THREE.Raycaster();
+const center2 = new THREE.Vector2(0,0);
+let currentHit = null;
+const hitbox = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.02,1.02,1.02)), new THREE.LineBasicMaterial({color:0xffffff}));
+hitbox.visible = false;
+scene.add(hitbox);
+
+let selectedBlockIndex = 0;
+const hotbarEl = document.getElementById('hotbar');
+const invBtn = document.getElementById('invBtn');
+const invModal = document.getElementById('inventoryModal');
+const invGrid = document.getElementById('inventoryGrid');
+const closeInv = document.getElementById('closeInv');
+
+invBtn.addEventListener('touchstart', (e)=> { e.preventDefault(); populateInventoryGrid(); invModal.style.display = 'flex'; });
+closeInv.addEventListener('touchstart', (e)=> { e.preventDefault(); invModal.style.display = 'none'; });
+
+function updateHotbar(){
+  hotbarEl.innerHTML = '';
+  const block = blockTypes[selectedBlockIndex];
+  const tex = textures[block.texKey].image.src;
+  const s = document.createElement('div');
+  s.className = 'slot active';
+  s.style.backgroundImage = `url(${tex})`;
+  hotbarEl.appendChild(s);
+}
+
+function populateInventoryGrid(){
+  invGrid.innerHTML = '';
+  blockTypes.forEach((block, i) => {
+    const tex = textures[block.texKey].image.src;
+    const tile = document.createElement('div');
+    tile.className = 'inv-tile';
+    tile.style.backgroundImage = `url(${tex})`;
+    tile.onclick = ()=>{ selectedBlockIndex = i; updateHotbar(); invModal.style.display = 'none'; };
+    tile.ontouchstart = (e)=>{ e.preventDefault(); selectedBlockIndex = i; updateHotbar(); invModal.style.display = 'none'; };
+    invGrid.appendChild(tile);
+  });
+}
+
+const geo = new THREE.BoxGeometry(1,1,1);
+
+function addBlock(x, y, z, typeIdx) {
+  const key = `${x},${y},${z}`;
+  if(worldData.has(key)) return;
+  const mats = blockTypes[typeIdx].mats;
+  const mesh = new THREE.Mesh(geo, mats);
+  mesh.position.set(x, y, z);
+  scene.add(mesh);
+  worldData.set(key, typeIdx);
+  meshMap.set(key, mesh);
+}
+
+function removeBlock(x, y, z) {
+  const key = `${x},${y},${z}`;
+  const mesh = meshMap.get(key);
+  if(mesh) {
+    scene.remove(mesh);
+    meshMap.delete(key);
+    worldData.delete(key);
+  }
+}
+
+document.getElementById('break').addEventListener('touchstart', e=>{
+  e.preventDefault();
+  if(currentHit) {
+    const p = currentHit.object.position;
+    removeBlock(p.x, p.y, p.z);
+    currentHit = null; hitbox.visible = false;
+  }
+});
+
+document.getElementById('place').addEventListener('touchstart', e=>{
+  e.preventDefault();
+  if(currentHit){
+    const p = currentHit.object.position.clone().add(currentHit.face.normal);
+    addBlock(Math.round(p.x), Math.round(p.y), Math.round(p.z), selectedBlockIndex);
+  }
+});
+
+function initWorld(){
+  setupMaterials();
+  const simplex = new SimplexNoise();
+  // Generar terreno con una altura mínima para evitar pozos
+  for(let x=0; x<worldSize; x++){
+    for(let z=0; z<worldSize; z++){
+      // Suavizar el ruido y establecer una altura mínima
+      let noiseValue = simplex.noise2D(x / 20, z / 20);
+      let h = Math.floor(noiseValue * 8) + worldHeight; // Ajustar multiplicador y base
+      
+      // Asegurar que la altura no sea menor que un mínimo razonable
+      h = Math.max(h, worldHeight - 2);
+      
+      for(let y=0; y<=h; y++){
+        if(y === h || y > h-2 || x===0 || x===worldSize-1 || z===0 || z===worldSize-1) {
+          let type = (y === h) ? 0 : (y > h-3 ? 1 : 2);
+          addBlock(x, y, z, type);
+        } else {
+          worldData.set(`${x},${y},${z}`, 2);
+        }
+      }
+    }
+  }
+  // Ajustar posición inicial del jugador a una altura segura
+  let spawnHeight = Math.floor(simplex.noise2D(16 / 20, 16 / 20) * 8) + worldHeight + 2;
+  // Ajustar spawnHeight para que no esté dentro de un bloque
+  while(worldData.has(`16,${spawnHeight},16`)) {
+    spawnHeight++;
+  }
+  player.pos.set(16, spawnHeight, 16);
+  updateHotbar();
+  loop();
+}
+
+let looking = false, lastTouch = {x:0,y:0};
+renderer.domElement.addEventListener('touchstart', e=>{
+  if(e.touches[0].clientX > window.innerWidth/2){ looking = true; lastTouch.x = e.touches[0].clientX; lastTouch.y = e.touches[0].clientY; }
+});
+renderer.domElement.addEventListener('touchmove', e=>{
+  if(!looking) return;
+  const t = e.touches[0];
+  player.yaw -= (t.clientX - lastTouch.x) * 0.005;
+  player.pitch = Math.max(-1.5, Math.min(1.5, player.pitch - (t.clientY - lastTouch.y) * 0.005));
+  lastTouch.x = t.clientX; lastTouch.y = t.clientY;
+});
+renderer.domElement.addEventListener('touchend', ()=> looking = false);
+
+function checkCollision(pos) {
+  const r = 0.3, h = 1.6;
+  for(let x = Math.floor(pos.x - r); x <= Math.floor(pos.x + r); x++) {
+    for(let y = Math.floor(pos.y - h); y <= Math.floor(pos.y); y++) {
+      for(let z = Math.floor(pos.z - r); z <= Math.floor(pos.z + r); z++) {
+        if(worldData.has(`${x},${y},${z}`)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function loop(){
+  let dx = 0, dz = 0;
+  const sin = Math.sin(player.yaw), cos = Math.cos(player.yaw);
+  if(moveControls.fwd){ dx -= sin * player.speed; dz -= cos * player.speed; }
+  if(moveControls.back){ dx += sin * player.speed; dz += cos * player.speed; }
+  if(moveControls.left){ dx -= cos * player.speed; dz += sin * player.speed; }
+  if(moveControls.right){ dx += cos * player.speed; dz -= sin * player.speed; }
+
+  const nX = player.pos.clone(); nX.x += dx;
+  if(!checkCollision(nX)) player.pos.x = nX.x;
+  const nZ = player.pos.clone(); nZ.z += dz;
+  if(!checkCollision(nZ)) player.pos.z = nZ.z;
+
+  player.velocityY -= player.gravity;
+  const nY = player.pos.clone(); nY.y += player.velocityY;
+  if(checkCollision(nY)){
+    if(player.velocityY < 0) player.onGround = true;
+    player.velocityY = 0;
+  } else {
+    player.pos.y = nY.y; player.onGround = false;
+  }
+  if(player.pos.y < -10) player.pos.set(16,15,16);
+
+  camera.position.copy(player.pos);
+  camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
+
+  raycaster.setFromCamera(center2, camera);
+  const hits = raycaster.intersectObjects(Array.from(meshMap.values()));
+  if(hits.length && hits[0].distance < 6){
+    currentHit = hits[0]; hitbox.visible = true; hitbox.position.copy(currentHit.object.position);
+  } else {
+    currentHit = null; hitbox.visible = false;
+  }
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
